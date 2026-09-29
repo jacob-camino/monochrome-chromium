@@ -51,6 +51,15 @@ void OverlayProcessorMac::ProcessForOverlays(
   TRACE_EVENT0("viz", "OverlayProcessorMac::ProcessForOverlays");
   auto* render_pass = render_passes->back().get();
 
+  if (force_grayscale_output_) {
+    // Separate CALayers bypass the renderer's final grayscale layer. Keep all
+    // ordinary video and web content in the composited primary plane, including
+    // HDR content that would otherwise be forced into an underlay. Content that
+    // requires a protected overlay uses the renderer's existing fallback.
+    candidates->push_back(CreatePrimaryPlane(primary_plane_params));
+    return;
+  }
+
   // We could have surfaceless overlay but not ca overlay system on. In this
   // case we would still have the OutputSurfaceOverlayPlane.
 

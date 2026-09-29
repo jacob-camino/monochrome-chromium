@@ -58,10 +58,15 @@ class VIZ_SERVICE_EXPORT OverlayProcessorMac
 
   gfx::CALayerResult GetCALayerErrorCode() const override;
 
+  void SetForceGrayscaleOutputForTesting(bool enabled) {
+    force_grayscale_output_ = enabled;
+  }
+
  private:
   // The damage that should be added the next frame for drawing to the output
   // surface.
   gfx::Rect ca_overlay_damage_rect_;
+  bool force_grayscale_output_ = true;
 
  protected:
   // Protected for testing.

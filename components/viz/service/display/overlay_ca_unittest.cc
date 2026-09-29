@@ -58,7 +58,9 @@ const gfx::Rect kOverlayDamageRect(0, 0, 100, 100);
 
 class CATestOverlayProcessor : public OverlayProcessorMac {
  public:
-  CATestOverlayProcessor() : OverlayProcessorMac() {}
+  CATestOverlayProcessor() : OverlayProcessorMac() {
+    SetForceGrayscaleOutputForTesting(false);
+  }
 };
 
 std::unique_ptr<AggregatedRenderPass> CreateRenderPass() {
@@ -224,6 +226,57 @@ class CALayerOverlayTest : public testing::Test {
  private:
   std::optional<OverlayCandidate> primary_plane_;
 };
+
+TEST_F(CALayerOverlayTest, GrayscaleKeepsContentInPrimaryPlane) {
+  // Exercise the production default, not the upstream test opt-out.
+  OverlayProcessorMac processor;
+  auto pass = CreateRenderPass();
+  auto* quad = CreateFullscreenCandidateQuad(
+      resource_provider_.get(), child_resource_provider_.get(),
+      child_provider_.get(), pass->shared_quad_state_list.back(), pass.get());
+  quad->is_video_frame = true;
+  AggregatedRenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
+  OverlayCandidateList candidates;
+  const gfx::Rect original_damage = damage_rect_;
+
+  processor.ProcessForOverlays(
+      resource_provider_.get(), &pass_list, GetIdentityColorMatrix(), {},
+      GetDefaultPrimaryPlane(pass_list.back()->output_rect.size()), &candidates,
+      &damage_rect_);
+
+  ASSERT_EQ(1u, candidates.size());
+  EXPECT_TRUE(candidates.front().is_root_render_pass);
+  EXPECT_EQ(0u, test::NumOverlaysExcludingPrimaryPlane(candidates));
+  EXPECT_EQ(original_damage, damage_rect_);
+  EXPECT_EQ(1u, pass_list.back()->quad_list.size());
+}
+
+TEST_F(CALayerOverlayTest, GrayscalePreventsForcedProtectedUnderlays) {
+  OverlayProcessorMac processor;
+  auto pass = CreateRenderPass();
+  auto* quad = CreateCandidateQuadAt(
+      resource_provider_.get(), child_resource_provider_.get(),
+      child_provider_.get(), pass->shared_quad_state_list.back(), pass.get(),
+      kRenderPassOutputRect, gfx::ProtectedVideoType::kHardwareProtected);
+  quad->is_video_frame = true;
+  // A copy request rejects the ordinary CALayer path. Even its forced
+  // protected-video underlay fallback must not bypass grayscale.
+  pass->copy_requests.push_back(CopyOutputRequest::CreateStubForTesting());
+  AggregatedRenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
+  OverlayCandidateList candidates;
+
+  processor.ProcessForOverlays(
+      resource_provider_.get(), &pass_list, GetIdentityColorMatrix(), {},
+      GetDefaultPrimaryPlane(pass_list.back()->output_rect.size()), &candidates,
+      &damage_rect_);
+
+  ASSERT_EQ(1u, candidates.size());
+  EXPECT_TRUE(candidates.front().is_root_render_pass);
+  EXPECT_EQ(0u, test::NumOverlaysExcludingPrimaryPlane(candidates));
+  EXPECT_EQ(quad, pass_list.back()->quad_list.front());
+}
 
 TEST_F(CALayerOverlayTest, AllowNonAxisAlignedTransform) {
   auto pass = CreateRenderPass();

@@ -21,6 +21,7 @@
 #include "base/memory/shared_memory_mapping.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/test_future.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "cc/base/math_util.h"
@@ -35,6 +36,8 @@
 #include "cc/test/test_types.h"
 #include "components/viz/client/client_resource_provider.h"
 #include "components/viz/common/features.h"
+#include "components/viz/common/frame_sinks/copy_output_request.h"
+#include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "components/viz/common/quads/aggregated_render_pass_draw_quad.h"
 #include "components/viz/common/quads/compositor_render_pass_draw_quad.h"
 #include "components/viz/common/quads/picture_draw_quad.h"
@@ -90,6 +93,215 @@ INSTANTIATE_TEST_SUITE_P(,
 
 // GetGpuRendererTypes() can return an empty list, e.g. on Fuchsia ARM64.
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(GPURendererPixelTest);
+
+class GrayscaleRendererPixelTest : public VizPixelTestWithParam {
+ protected:
+  void SetUp() override {
+    device_viewport_size_ = gfx::Size(32, 32);
+    renderer_settings_.partial_swap_enabled = true;
+    VizPixelTestWithParam::SetUp();
+    output_surface_->SetForceGrayscaleOutputForTesting(true);
+  }
+
+  SkBitmap SolidExpected(SkColor color) {
+    SkBitmap bitmap;
+    bitmap.allocN32Pixels(device_viewport_size_.width(),
+                          device_viewport_size_.height());
+    bitmap.eraseColor(color);
+    return bitmap;
+  }
+};
+
+INSTANTIATE_TEST_SUITE_P(,
+                         GrayscaleRendererPixelTest,
+                         testing::ValuesIn(GetRendererTypes()),
+                         testing::PrintToStringParamName());
+
+TEST_P(GrayscaleRendererPixelTest, PrimaryColorsBecomeDistinctGrayLevels) {
+  const gfx::Rect viewport(device_viewport_size_);
+  auto pass = CreateTestRootRenderPass(AggregatedRenderPassId{1}, viewport);
+  const std::array<SkColor4f, 4> colors = {SkColors::kRed, SkColors::kGreen,
+                                           SkColors::kBlue, SkColors::kWhite};
+  // Independent expected values for Skia's 0.213/0.715/0.072 luma weights.
+  const std::array<int, 4> levels = {54, 182, 18, 255};
+  SkBitmap expected = SolidExpected(SK_ColorBLACK);
+  const int width = viewport.width() / 4;
+  for (int i = 0; i < 4; ++i) {
+    const gfx::Rect stripe(i * width, 0, width, viewport.height());
+    cc::AddQuad(pass.get(), stripe, colors[i]);
+    expected.erase(SkColorSetRGB(levels[i], levels[i], levels[i]),
+                   gfx::RectToSkIRect(stripe));
+  }
+  AggregatedRenderPassList passes;
+  passes.push_back(std::move(pass));
+  EXPECT_TRUE(
+      RunPixelTest(&passes, expected, cc::FuzzyPixelOffByOneComparator()));
+}
+
+TEST_P(GrayscaleRendererPixelTest, TextureContentIsGrayscale) {
+  const gfx::Rect viewport(device_viewport_size_);
+  auto pass = CreateTestRootRenderPass(AggregatedRenderPassId{1}, viewport);
+  auto* state = CreateTestSharedQuadState(gfx::Transform(), viewport,
+                                          pass.get(), gfx::MaskFilterInfo());
+  CreateTestTextureDrawQuad(
+      !is_software_renderer(), viewport, SkColors::kRed, SkColors::kTransparent,
+      true, state, resource_provider_.get(), child_resource_provider_.get(),
+      child_context_provider_, pass.get());
+  AggregatedRenderPassList passes;
+  passes.push_back(std::move(pass));
+  EXPECT_TRUE(RunPixelTest(&passes, SolidExpected(SkColorSetRGB(54, 54, 54)),
+                           cc::FuzzyPixelOffByOneComparator()));
+}
+
+TEST_P(GrayscaleRendererPixelTest, NestedRenderPassIsGrayscale) {
+  const gfx::Rect viewport(device_viewport_size_);
+  const AggregatedRenderPassId child_id{2};
+  AggregatedRenderPassList passes;
+  auto* child =
+      cc::AddRenderPass(&passes, child_id, viewport, gfx::Transform());
+  cc::AddQuad(child, viewport, SkColors::kBlue);
+  auto* root = cc::AddRenderPass(&passes, AggregatedRenderPassId{1}, viewport,
+                                 gfx::Transform());
+  auto* state = CreateTestSharedQuadState(gfx::Transform(), viewport, root,
+                                          gfx::MaskFilterInfo());
+  CreateTestRenderPassDrawQuad(state, viewport, child_id, root);
+  EXPECT_TRUE(RunPixelTest(&passes, SolidExpected(SkColorSetRGB(18, 18, 18)),
+                           cc::FuzzyPixelOffByOneComparator()));
+}
+
+TEST_P(GrayscaleRendererPixelTest, OpaquePictureContentIsGrayscale) {
+  const gfx::Rect viewport(device_viewport_size_);
+  auto pass = CreateTestRootRenderPass(AggregatedRenderPassId{1}, viewport);
+  cc::FakeRecordingSource recording(viewport.size());
+  cc::PaintFlags flags;
+  flags.setColor(SkColors::kRed);
+  recording.add_draw_rect_with_flags(viewport, flags);
+  recording.Rerecord();
+  scoped_refptr<cc::RasterSource> raster_source =
+      recording.CreateRasterSource();
+  auto* state = CreateTestSharedQuadState(gfx::Transform(), viewport,
+                                          pass.get(), gfx::MaskFilterInfo());
+  auto* quad = pass->CreateAndAppendDrawQuad<PictureDrawQuad>();
+  quad->SetNew(state, viewport, viewport, false, gfx::RectF(viewport), false,
+               viewport, 1.f, {}, raster_source->GetDisplayItemList(),
+               cc::ScrollOffsetMap());
+  AggregatedRenderPassList passes;
+  passes.push_back(std::move(pass));
+  EXPECT_TRUE(RunPixelTest(&passes, SolidExpected(SkColorSetRGB(54, 54, 54)),
+                           cc::FuzzyPixelOffByOneComparator()));
+}
+
+TEST_P(GrayscaleRendererPixelTest, TransparentContentPreservesAlpha) {
+  const gfx::Rect viewport(device_viewport_size_);
+  auto pass = CreateTestRootRenderPass(AggregatedRenderPassId{1}, viewport);
+  pass->has_transparent_background = true;
+  cc::AddQuad(pass.get(), viewport, SkColor4f{1.f, 0.f, 0.f, 0.5f});
+  AggregatedRenderPassList passes;
+  passes.push_back(std::move(pass));
+  EXPECT_TRUE(RunPixelTest(&passes,
+                           SolidExpected(SkColorSetARGB(128, 54, 54, 54)),
+                           cc::FuzzyPixelOffByOneComparator()));
+}
+
+TEST_P(GrayscaleRendererPixelTest, RootCopyRequestSeesGrayscaleOutput) {
+  const gfx::Rect viewport(device_viewport_size_);
+  auto pass = CreateTestRootRenderPass(AggregatedRenderPassId{1}, viewport);
+  cc::AddQuad(pass.get(), viewport, SkColors::kRed);
+  base::test::TestFuture<std::unique_ptr<CopyOutputResult>> copy_result;
+  pass->copy_requests.push_back(std::make_unique<CopyOutputRequest>(
+      CopyOutputRequest::ResultFormat::RGBA,
+      CopyOutputRequest::ResultDestination::kSystemMemory,
+      copy_result.GetCallback()));
+  AggregatedRenderPassList passes;
+  passes.push_back(std::move(pass));
+  const SkBitmap expected = SolidExpected(SkColorSetRGB(54, 54, 54));
+  EXPECT_TRUE(
+      RunPixelTest(&passes, expected, cc::FuzzyPixelOffByOneComparator()));
+  ASSERT_TRUE(copy_result.Wait());
+  const auto& result = copy_result.Get();
+  ASSERT_FALSE(result->IsEmpty());
+  auto bitmap = result->ScopedAccessSkBitmap().GetOutScopedBitmapAndMetadata();
+  ASSERT_TRUE(bitmap.has_value());
+  EXPECT_TRUE(
+      cc::FuzzyPixelOffByOneComparator().Compare(bitmap->bitmap, expected));
+}
+
+TEST_P(GrayscaleRendererPixelTest, PartialDamagePreservesOutput) {
+  const gfx::Rect viewport(device_viewport_size_);
+  const gfx::Rect damage(4, 6, 8, 10);
+  SkBitmap expected = SolidExpected(SkColorSetRGB(54, 54, 54));
+  expected.erase(SkColorSetRGB(182, 182, 182), gfx::RectToSkIRect(damage));
+  for (int frame = 0; frame < 2; ++frame) {
+    SCOPED_TRACE(frame);
+    auto pass = CreateTestRootRenderPass(AggregatedRenderPassId{1}, viewport);
+    cc::AddQuad(pass.get(), damage, SkColors::kGreen);
+    if (frame == 0) {
+      cc::AddQuad(pass.get(), viewport, SkColors::kRed);
+    } else {
+      pass->damage_rect = damage;
+    }
+    AggregatedRenderPassList passes;
+    passes.push_back(std::move(pass));
+    EXPECT_TRUE(
+        RunPixelTest(&passes, expected, cc::FuzzyPixelOffByOneComparator()));
+  }
+}
+
+class GrayscaleSoftwareRendererPixelTest : public VizPixelTest {
+ public:
+  GrayscaleSoftwareRendererPixelTest()
+      : VizPixelTest(RendererType::kSoftware) {}
+
+ protected:
+  void SetUp() override {
+    device_viewport_size_ = gfx::Size(32, 32);
+    renderer_settings_.partial_swap_enabled = true;
+    renderer_settings_.should_clear_root_render_pass = false;
+    VizPixelTest::SetUp();
+    output_surface_->SetForceGrayscaleOutputForTesting(true);
+  }
+
+  void DrawFrame(const gfx::Rect& quad_rect,
+                 const gfx::Rect& damage_rect,
+                 SkColor4f color,
+                 SkBitmap expected) {
+    AggregatedRenderPassList passes;
+    auto* root =
+        cc::AddRenderPass(&passes, AggregatedRenderPassId{1},
+                          gfx::Rect(device_viewport_size_), gfx::Transform());
+    root->damage_rect = damage_rect;
+    cc::AddQuad(root, quad_rect, color);
+    EXPECT_TRUE(
+        RunPixelTest(&passes, expected, cc::FuzzyPixelOffByOneComparator()));
+  }
+
+  SkBitmap GrayBackground() {
+    SkBitmap bitmap;
+    bitmap.allocN32Pixels(device_viewport_size_.width(),
+                          device_viewport_size_.height());
+    bitmap.eraseColor(SkColorSetRGB(54, 54, 54));
+    return bitmap;
+  }
+};
+
+TEST_F(GrayscaleSoftwareRendererPixelTest,
+       PartialSwapPreservesUndamagedPixels) {
+  const gfx::Rect viewport(device_viewport_size_);
+  SkBitmap expected = GrayBackground();
+  DrawFrame(viewport, viewport, SkColors::kRed, expected);
+  const gfx::Rect damage(4, 6, 8, 10);
+  expected.erase(SkColorSetRGB(182, 182, 182), gfx::RectToSkIRect(damage));
+  DrawFrame(viewport, damage, SkColors::kGreen, expected);
+}
+
+TEST_F(GrayscaleSoftwareRendererPixelTest, NoClearPreservesPreviousContents) {
+  const gfx::Rect viewport(device_viewport_size_);
+  SkBitmap expected = GrayBackground();
+  DrawFrame(viewport, viewport, SkColors::kRed, expected);
+  const gfx::Rect foreground(4, 6, 8, 10);
+  expected.erase(SkColorSetRGB(182, 182, 182), gfx::RectToSkIRect(foreground));
+  DrawFrame(foreground, viewport, SkColors::kGreen, expected);
+}
 
 TEST_P(RendererPixelTest, SimpleGreenRect) {
   gfx::Rect rect(this->device_viewport_size_);

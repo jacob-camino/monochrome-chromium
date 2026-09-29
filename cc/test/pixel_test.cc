@@ -291,6 +291,7 @@ void PixelTest::SetUpSkiaRenderer(gfx::SurfaceOrigin output_surface_origin) {
           std::move(skia_deps));
   output_surface_ = viz::SkiaOutputSurfaceImpl::Create(
       display_controller_.get(), renderer_settings_, &debug_settings_);
+  output_surface_->SetForceGrayscaleOutputForTesting(false);
   output_surface_->BindToClient(output_surface_client_.get());
   static_cast<viz::SkiaOutputSurfaceImpl*>(output_surface_.get())
       ->SetCapabilitiesForTesting(output_surface_origin);
@@ -326,6 +327,7 @@ void PixelTest::SetUpSoftwareRenderer() {
 
   output_surface_ = std::make_unique<PixelTestOutputSurface>(
       std::make_unique<viz::SoftwareOutputDevice>());
+  output_surface_->SetForceGrayscaleOutputForTesting(false);
   output_surface_->BindToClient(output_surface_client_.get());
 
   auto* gpu_service = gpu_service_holder_->gpu_service();

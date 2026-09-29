@@ -1,0 +1,12 @@
+# Native Apple Silicon release build, with a self-contained application bundle.
+target_cpu = "arm64"
+is_debug = false
+is_official_build = false
+is_component_build = false
+symbol_level = 0
+blink_symbol_level = 0
+v8_symbol_level = 0
+enable_dsyms = false
+use_lld = false
+use_siso = true
+use_remoteexec = false

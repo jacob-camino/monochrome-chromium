@@ -1539,6 +1539,25 @@ void SkiaRenderer::BeginDrawingRenderPass(
     SetScissorTestRect(render_pass_update_rect);
   }
 
+  if (is_root && output_surface_->force_grayscale_output()) {
+    CHECK(!grayscale_output_layer_reset_.has_value());
+    grayscale_output_layer_reset_.emplace(current_canvas_.get(),
+                                          /*do_save=*/true);
+    const SkRect layer_bounds = gfx::RectToSkRect(render_pass_update_rect);
+    // Bound the restore as well as the draws, preserving undamaged pixels.
+    current_canvas_->clipRect(layer_bounds);
+    SkColorMatrix grayscale;
+    grayscale.setSaturation(0.f);
+    SkPaint paint;
+    paint.setBlendMode(SkBlendMode::kSrc);
+    paint.setColorFilter(
+        SkColorFilters::Matrix(grayscale, SkColorFilters::Clamp::kNo));
+    // Preserve retained content when the root pass does not request a clear.
+    current_canvas_->saveLayer(SkCanvas::SaveLayerRec(
+        &layer_bounds, &paint,
+        needs_clear ? 0 : SkCanvas::kInitWithPrevious_SaveLayerFlag));
+  }
+
   if (NeedsLayerForColorConversion(render_pass)) {
     CHECK(!hdr_color_conversion_layer_reset_.has_value());
     hdr_color_conversion_layer_reset_.emplace(current_canvas_.get(),
@@ -3591,6 +3610,8 @@ void SkiaRenderer::FinishDrawingRenderPass() {
   // Pops a layer that is pushed at the start of |BeginDrawingRenderPass|. This
   // applies color space conversion for HDR passes, if present.
   hdr_color_conversion_layer_reset_.reset();
+  // Desaturate only after every root-pass draw and HDR color conversion.
+  grayscale_output_layer_reset_.reset();
 
   if (BufferQueue* queue =
           GetRenderPassBufferQueue(current_frame()->current_render_pass->id)) {

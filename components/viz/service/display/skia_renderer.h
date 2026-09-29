@@ -556,6 +556,9 @@ class VIZ_SERVICE_EXPORT SkiaRenderer : public DirectRenderer {
   // blend-friendly color space.
   std::optional<SkAutoCanvasRestore> hdr_color_conversion_layer_reset_;
 
+  // Outermost root-pass layer, restored after HDR conversion and delegated ink.
+  std::optional<SkAutoCanvasRestore> grayscale_output_layer_reset_;
+
   bool UsingSkiaForDelegatedInk() const;
   uint32_t debug_tint_modulate_count_ = 0;
 

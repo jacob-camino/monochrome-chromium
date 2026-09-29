@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Monochrome Chromium rendering smoke test</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 800px; height: 640px; overflow: hidden; }
+  body { background: #eeeeee; font: 14px sans-serif; color: #000; }
+  .label { position: absolute; left: 20px; }
+  .row { position: absolute; left: 20px; width: 700px; height: 80px; }
+  .css { top: 40px; display: flex; gap: 20px; }
+  .css > div { flex: 0 0 100px; height: 80px; }
+  iframe { border: 0; }
+</style>
+<span class="label" style="top:15px">CSS</span>
+<div class="row css">
+  <div style="background:#ff0000"></div><div style="background:#00ff00"></div>
+  <div style="background:#0000ff"></div><div style="background:#808080"></div>
+  <div style="background:#ffffff"></div><div style="background:#000000"></div>
+</div>
+<span class="label" style="top:135px">Inline SVG</span>
+<svg class="row" style="top:160px" width="700" height="80" xmlns="http://www.w3.org/2000/svg">
+  <rect width="100" height="80" fill="#ff0000"/>
+  <rect x="120" width="100" height="80" fill="#00ff00"/>
+  <rect x="240" width="100" height="80" fill="#0000ff"/>
+  <rect x="360" width="100" height="80" fill="#808080"/>
+  <rect x="480" width="100" height="80" fill="#ffffff"/>
+  <rect x="600" width="100" height="80" fill="#000000"/>
+</svg>
+<span class="label" style="top:255px">SVG image</span>
+<img class="row" style="top:280px" alt="Color and brightness swatches"
+  src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='700' height='80'%3E%3Crect width='100' height='80' fill='%23ff0000'/%3E%3Crect x='120' width='100' height='80' fill='%2300ff00'/%3E%3Crect x='240' width='100' height='80' fill='%230000ff'/%3E%3Crect x='360' width='100' height='80' fill='%23808080'/%3E%3Crect x='480' width='100' height='80' fill='%23ffffff'/%3E%3Crect x='600' width='100' height='80' fill='%23000000'/%3E%3C/svg%3E">
+<span class="label" style="top:375px">Canvas 2D</span>
+<canvas id="canvas" class="row" style="top:400px" width="700" height="80"></canvas>
+<span class="label" style="top:495px">Iframe</span>
+<iframe class="row" style="top:520px" title="Iframe rendering swatches"
+  srcdoc="<!doctype html><html><style>html,body{margin:0;width:700px;height:80px;overflow:hidden}body{display:flex;gap:20px}div{flex:0 0 100px;height:80px}</style><div style='background:#ff0000'></div><div style='background:#00ff00'></div><div style='background:#0000ff'></div><div style='background:#808080'></div><div style='background:#ffffff'></div><div style='background:#000000'></div></html>"></iframe>
+<script>
+  const ctx = document.getElementById('canvas').getContext('2d');
+  ['#ff0000', '#00ff00', '#0000ff', '#808080', '#ffffff', '#000000'].forEach((color, i) => {
+    ctx.fillStyle = color;
+    ctx.fillRect(i * 120, 0, 100, 80);
+  });
+</script>
+</html>

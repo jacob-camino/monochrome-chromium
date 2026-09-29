@@ -52,6 +52,7 @@
 #include "third_party/skia/include/core/SkPoint.h"
 #include "third_party/skia/include/core/SkShader.h"
 #include "third_party/skia/include/core/SkSwizzle.h"
+#include "third_party/skia/include/effects/SkColorMatrix.h"
 #include "third_party/skia/include/effects/SkShaderMaskFilter.h"
 #include "ui/gfx/geometry/axis_transform2d.h"
 #include "ui/gfx/geometry/rect_conversions.h"
@@ -134,6 +135,7 @@ void SoftwareRenderer::BeginDrawingFrame() {
 
 void SoftwareRenderer::FinishDrawingFrame() {
   TRACE_EVENT0("viz", "SoftwareRenderer::FinishDrawingFrame");
+  DCHECK(!grayscale_output_layer_reset_.has_value());
   // `current_canvas_` may be pointing to `current_framebuffer_canvas_`. Make
   // sure to reset it before destroying `current_framebuffer_canvas_`.
   current_canvas_ = nullptr;
@@ -173,12 +175,13 @@ void SoftwareRenderer::SetClipRect(const gfx::Rect& rect) {
   // provided by Android or embedder app. And Chrome doesn't use
   // SoftwareRenderer on Android.
 #if !BUILDFLAG(IS_ANDROID)
-  // SetClipRect is assumed to be applied temporarily, on an
-  // otherwise-unclipped canvas.
-  DCHECK_EQ(current_canvas_->getDeviceClipBounds().width(),
-            current_canvas_->imageInfo().width());
-  DCHECK_EQ(current_canvas_->getDeviceClipBounds().height(),
-            current_canvas_->imageInfo().height());
+  // The grayscale output layer already clips the canvas to the update rect.
+  if (!grayscale_output_layer_reset_.has_value()) {
+    DCHECK_EQ(current_canvas_->getDeviceClipBounds().width(),
+              current_canvas_->imageInfo().width());
+    DCHECK_EQ(current_canvas_->getDeviceClipBounds().height(),
+              current_canvas_->imageInfo().height());
+  }
 #endif
   current_canvas_->clipRect(gfx::RectToSkRect(rect));
   current_canvas_->setMatrix(current_matrix);
@@ -260,9 +263,33 @@ void SoftwareRenderer::BeginDrawingRenderPass(
     SetScissorTestRect(render_pass_update_rect);
   }
 
+  if (render_pass == current_frame()->root_render_pass && current_canvas_ &&
+      output_surface_->force_grayscale_output()) {
+    CHECK(!grayscale_output_layer_reset_.has_value());
+    grayscale_output_layer_reset_.emplace(current_canvas_.get(),
+                                          /*do_save=*/true);
+    current_canvas_->resetMatrix();
+    const SkRect layer_bounds = gfx::RectToSkRect(render_pass_update_rect);
+    current_canvas_->clipRect(layer_bounds);
+    SkColorMatrix grayscale;
+    grayscale.setSaturation(0.f);
+    SkPaint paint;
+    paint.setBlendMode(SkBlendMode::kSrc);
+    paint.setColorFilter(
+        SkColorFilters::Matrix(grayscale, SkColorFilters::Clamp::kNo));
+    current_canvas_->saveLayer(SkCanvas::SaveLayerRec(
+        &layer_bounds, &paint,
+        needs_clear ? 0 : SkCanvas::kInitWithPrevious_SaveLayerFlag));
+  }
+
   if (needs_clear) {
     ClearFramebuffer();
   }
+}
+
+void SoftwareRenderer::FinishDrawingRenderPass() {
+  // Restore before copy requests read the root canvas, not just before swap.
+  grayscale_output_layer_reset_.reset();
 }
 
 bool SoftwareRenderer::IsSoftwareResource(ResourceId resource_id) {

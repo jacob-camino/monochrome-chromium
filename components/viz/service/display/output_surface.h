@@ -200,6 +200,13 @@ class VIZ_SERVICE_EXPORT OutputSurface {
   }
   const SkM44& color_matrix() const { return color_matrix_; }
 
+  // Monochrome applies desaturation to the completed root render pass. This
+  // stays enabled in production; upstream color pixel tests opt out explicitly.
+  bool force_grayscale_output() const { return force_grayscale_output_; }
+  void SetForceGrayscaleOutputForTesting(bool enabled) {
+    force_grayscale_output_ = enabled;
+  }
+
   // Only useful for GPU backend.
   virtual gpu::SurfaceHandle GetSurfaceHandle() const;
 
@@ -305,6 +312,7 @@ class VIZ_SERVICE_EXPORT OutputSurface {
   const Type type_;
   std::unique_ptr<SoftwareOutputDevice> software_device_;
   SkM44 color_matrix_;
+  bool force_grayscale_output_ = true;
 };
 
 #if BUILDFLAG(IS_WIN)

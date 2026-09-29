@@ -6,6 +6,7 @@
 #define COMPONENTS_VIZ_SERVICE_DISPLAY_SOFTWARE_RENDERER_H_
 
 #include <memory>
+#include <optional>
 
 #include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
@@ -13,6 +14,7 @@
 #include "components/viz/service/display/direct_renderer.h"
 #include "components/viz/service/display/display_resource_provider_software.h"
 #include "components/viz/service/viz_service_export.h"
+#include "third_party/skia/include/core/SkCanvas.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/latency/latency_info.h"
 
@@ -60,6 +62,7 @@ class VIZ_SERVICE_EXPORT SoftwareRenderer : public DirectRenderer {
                               const gfx::Rect& render_pass_update_rect,
                               const gfx::Size& viewport_size) override;
   void DoDrawQuad(const DrawQuad* quad, const gfx::QuadF* draw_region) override;
+  void FinishDrawingRenderPass() override;
   void BeginDrawingFrame() override;
   void FinishDrawingFrame() override;
   void EnsureScissorTestDisabled() override;
@@ -133,6 +136,7 @@ class VIZ_SERVICE_EXPORT SoftwareRenderer : public DirectRenderer {
   SkPaint current_paint_;
   SkSamplingOptions current_sampling_;
   std::unique_ptr<SkCanvas> current_framebuffer_canvas_;
+  std::optional<SkAutoCanvasRestore> grayscale_output_layer_reset_;
 };
 
 }  // namespace viz
